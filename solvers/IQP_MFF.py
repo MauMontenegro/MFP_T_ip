@@ -246,6 +246,8 @@ class IQP_MFF():
             std = np.std(node_size)
             time_mean.append(m)
             time_std_dv.append(std)
+        time_std_dv = np.asarray(time_std_dv)
+        time_mean = np.asarray(time_mean)
 
         # Statistics for saved vertices
         for node_size in self.total_saved:
@@ -267,6 +269,11 @@ class IQP_MFF():
         numpy.save(self.path / "Statistics_IQP", numpy.array([saved_mean, saved_std_dv, time_mean, time_std_dv]))
         y= np.arange(0,len(time_mean), 1, dtype=int)
         fig, ax =plt.subplots(1)
-        ax.plot(y,saved_mean,label="Mean saved Vertices",color="blue")
-        ax.fill_between(y,saved_mean+saved_std_dv,saved_mean-saved_std_dv,facecolor="blue",alpha=0.5)
-        plt.savefig(self.path / 'IQP_statistics_fig.png')
+        ax.plot(y,saved_mean, label="Mean saved Vertices",color="blue")
+        ax.fill_between(y, saved_mean+saved_std_dv,saved_mean-saved_std_dv,facecolor="blue",alpha=0.5)
+        plt.savefig(self.path / 'IQP_Saved.png')
+
+        fig, ax = plt.subplots(1)
+        ax.plot(y, time_mean, label="Mean Time Vertices", color="red")
+        ax.fill_between(y, time_mean + time_std_dv, time_mean - time_std_dv, facecolor="red", alpha=0.5)
+        plt.savefig(self.path / 'IQP_Time.png')
