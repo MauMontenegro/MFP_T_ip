@@ -5,6 +5,7 @@ Author: Mauro Alejandro Montenegro Meza
 """
 import time as tm
 from pathlib import Path
+import matplotlib.pyplot as plt
 
 import networkx as nx
 import numpy
@@ -22,46 +23,49 @@ import numpy as np
 
 class ILP_MFF():
     def __init__(self, mode, load, path, config):
+        # Individual Variables
+        self.n_variables = []
+        self.n_restrictions = []
+
+        # Variables to plot with average
+        self.times = []
+        self.total_times = []
+        self.total_saved = []
+        self.saved = []
+
+        # Control Variables
         self.config = config
         self.mode = mode
         self.load = load
-        self.times = []
-        self.solutions = []
-        self.saved = []
-        self.n_restrictions = []
-        self.n_variables = []
-        self.root_degree = []
-        self.max_degree = []
         if self.mode == 'batch':
-            self.w_path = os.walk(Path.cwd() / 'Instances')
-            self.path = path + '/Instances'
+            self.path = path
         else:
             self.w_path = os.walk(Path.cwd() / 'Instance')
             self.path = path + '/Instance'
-
     def solve(self):
-        for root, directories, files in self.w_path:
-            directories.sort()
-            for directory in directories:
-                print("\n\nCompute solution for {n} nodes".format(n=directory))
-                instance = generateInstance(self.load, self.path, str(directory))
+        # Traverse and save Tree Node Sizes dirs
+        size_dirs = []
+        for d in next(os.walk((self.path))):
+            size_dirs.append(d)
+        size_dirs = sorted(size_dirs[1])
+        for dir in size_dirs:
+            instance_path = self.path / str(dir)
+            # Traverse each instance
+            inst_dirs = []
+            for i in next(os.walk((instance_path))):
+                inst_dirs.append(i)
+            inst_dirs = sorted(inst_dirs[1])
+            # Solve IQP problem for each instance
+            for inst in inst_dirs:
+                print("\n\nCompute solution for size: {n}, instance: {i}".format(n=dir, i=inst))
+                # Load Instance
+                instance = generateInstance(self.load, instance_path, str(inst))
                 T = instance[0]
                 N = instance[1]
                 starting_fire = instance[2]
                 T_Ad_Sym = instance[3]
-                seed = instance[4]
-                scale = instance[5]
-                a_x_pos = instance[6]
-                a_y_pos = instance[7]
-                self.max_degree.append(instance[8])
-                self.root_degree.append(instance[9])
 
-                # Pre-Compute Burning_Times for each node in T
-                levels = nx.single_source_shortest_path_length(
-                    T, starting_fire
-                )  # Obtain Level in Tree for each node
-
-                # --- MODEL---
+                # --- MODEL-------
                 m = Model("ILP_FF")
                 m.Params.outputFlag = 1  # 0 - Off  //  1 - On
                 m.setParam("MIPGap", self.config['experiment']['mip_gap'])
@@ -79,7 +83,7 @@ class ILP_MFF():
                     if i != starting_fire:
                         initial_vars[i] = m.addVar(vtype=GRB.BINARY, name="x,%s" % str(0) + "," + str(i))
                 m.update()
-                print(initial_vars)
+
                 # ---InitialPos_Node_Variables----
                 # (X_phase1_node0_node0), (X_phase1_node0_node1), .... ,(X_phase1_node0_nodeN),(X_phase1_node1_node0),...,(X_phase1_nodeN_nodeN)
                 # (X_phase2_node0_node0), (X_phase2_node0_node1), ...., (X_phase2_node0_nodeN),(X_phase2_node1_node0),...,(X_phase2_nodeN_nodeN)
@@ -96,13 +100,14 @@ class ILP_MFF():
                 for phase in range(N - 1):
                     for node_1 in range(N):
                         for node_2 in range(N):
-                            if (node_1 != starting_fire & node_2 != starting_fire):
+                            if ((node_1 != starting_fire) and (node_2 != starting_fire)):
+                                #print("Adding (x,{i},{j},{k})".format(i=phase+1,j=node_1,k=node_2))
                                 vars[phase][node_1][node_2] = m.addVar(vtype=GRB.BINARY,
-                                                                       name="x,%s" % str(phase + 1) + "," + str(
-                                                                           node_1) + "," + str(node_2))
+                                                                       name="x,%s" % str(phase + 1) + "," + str(node_1) + "," + str(node_2))
                 m.update()
-                print('Decision Variables No Pulp')
-                print(vars)
+                #print(starting_fire)
+                #print(vars)
+
                 # -------- OBJECTIVE FUNCTION ----------
                 Nodes = list(T.nodes)
                 Nodes.remove(N)
@@ -127,16 +132,21 @@ class ILP_MFF():
                         objective += np.dot(w_copy, vars[i][j])
                 m.setObjective(objective, GRB.MAXIMIZE)
 
+                #print(objective)
                 count_const = 0
+
                 # ----------SUBJECT TO---------------------
+
                 # Constraint 1
+                # Initial position to first saved vertex is unique
                 sum_initial_vars = 0
                 for i in range(N):
                     sum_initial_vars += initial_vars[i]
                 count_const += 1
-                m.addConstr(sum_initial_vars == 1)
+                m.addConstr(sum_initial_vars <= 1)
 
                 # Constraint 2
+                # Only one variable active for each phase
                 sum_vars = 0
                 for phase in range(N-1):
                     sum_vars = 0
@@ -144,9 +154,10 @@ class ILP_MFF():
                         for node_2 in range(N):
                           sum_vars += vars[phase][node_1][node_2]
                     count_const += 1
-                    m.addConstr(sum_vars == 1)
+                    m.addConstr(sum_vars <= 1)
 
                 # Constraint 3
+                # Valid first reachable vertex
                 levels = nx.single_source_shortest_path_length(
                     T, starting_fire
                 )
@@ -177,6 +188,7 @@ class ILP_MFF():
                     m.addConstr(q_1 <= q_2, name="Q,%s" % str(phase))
 
                 # Constraint 4
+                # Leaf nodes
                 leaf_nodes = [node for node in T.nodes() if T.in_degree(node) != 0 and T.out_degree(node) == 0]
                 restricted_ancestors = {}
                 for leaf in leaf_nodes:
@@ -196,6 +208,7 @@ class ILP_MFF():
                     m.addConstr(l_q <= 1)
 
                 # Constraint 5
+                # Consistency Restriction
                 for i in range(N):
                     l_q = 0
                     l_q += initial_vars[i]
@@ -207,7 +220,6 @@ class ILP_MFF():
                     m.addConstr(l_q <= 1)
 
                 for i in range(N):  # For each node v
-                    l_q = 0
                     for j in range(N - 2):  # For each phase
                         l_q = 0
                         for k in range(N):  # For each node u
@@ -220,6 +232,7 @@ class ILP_MFF():
                         m.addConstr(l_q <= 1)
 
                 # Constraint 6
+                # Consecutive solution constraint
                 c_1 = 0
                 c_2 = 0
                 for i in range(N):
@@ -230,21 +243,94 @@ class ILP_MFF():
                 count_const += 1
                 m.addConstr(c_1 >= c_2)
 
-                print('Total Constraints')
-                print(count_const)
+                for z in range(N-2):
+                    c_1=0
+                    c_2=0
+                    for i in range(N):
+                        for j in range(N):
+                            c_1 += vars[z][i][j]
+                            c_2 += vars[z+1][i][j]
+                    m.addConstr(c_1 >= c_2)
+
+                #m.update()
+                #print(m.display())
                 # ----------------- Optimize Step--------------------------------
                 m.optimize()
                 runtime = m.Runtime
-                print("The run time is %f" % runtime)
-                print("Obj:", m.ObjVal)
                 self.saved.append(m.ObjVal)
                 self.times.append(runtime)
                 sol = []
                 for v in m.getVars():
                     if v.X > 0:
                         sol.append(v)
-                        print(v.varName)
-                self.solutions.append(sol)
+                self.solution = sol
+
+                # Save Solution
+                self.saveSolution(instance_path, str(inst), sol, m.Objval, runtime)
+            # Save
+            self.total_saved.append(self.saved)
+            self.total_times.append(self.times)
+            # Reset
+            self.saved = []
+            self.times = []
+        self.Statistics()
+
+    def saveSolution(self, instance_path, instance, solution, saved, time):
+        output_path = instance_path / instance / "Solution_Summary_ILP"
+        with open(output_path, "w") as writer:
+            writer.write("Solution: {}\n".format(solution))
+            writer.write("Saved: {}\n".format(saved))
+            writer.write("RunTime: {}\n".format(time))
+
+            writer.write("G_mipgap: {}\n".format(self.config['experiment']['mip_gap']))
+            writer.write("G_threads: {}\n".format(self.config['experiment']['threads']))
+            writer.write("presolve: {}\n".format(self.config['experiment']['presolve']))
+            writer.write("method: {}\n".format(self.config['experiment']['method']))
+
+    def Statistics(self):
+        time_mean = []
+        time_std_dv=[]
+        saved_mean = []
+        saved_std_dv = []
+        # Statistics for run time
+        for node_size in self.total_times:
+            m = np.mean(node_size)
+            std = np.std(node_size)
+            time_mean.append(m)
+            time_std_dv.append(std)
+        time_std_dv = np.asarray(time_std_dv)
+        time_mean = np.asarray(time_mean)
+
+        # Statistics for saved vertices
+        for node_size in self.total_saved:
+            m = np.mean(node_size)
+            std = np.std(node_size)
+            saved_mean.append(m)
+            saved_std_dv.append(std)
+        saved_std_dv=np.asarray(saved_std_dv)
+        saved_mean=np.asarray(saved_mean)
+
+        print(saved_mean)
+        print(saved_std_dv)
+
+        numpy.save(self.path / "Statistics_ILP", numpy.array([saved_mean, saved_std_dv, time_mean, time_std_dv]))
+        y= np.arange(0,len(time_mean), 1, dtype=int)
+        fig, ax = plt.subplots(1)
+        ax.plot(y,saved_mean, label="Mean saved Vertices",color="blue")
+        ax.set_title("ILP Mean Saved Vertices")
+        ax.set_xlabel('Tree Size')
+        ax.set_ylabel('Saved Vertices')
+        ax.fill_between(y, saved_mean-saved_std_dv,saved_mean+saved_std_dv,facecolor="blue",alpha=0.5)
+        plt.savefig(self.path / 'ILP_Saved.png')
+
+        fig, ax = plt.subplots(1)
+        ax.plot(y, time_mean, label="Mean Time Vertices", color="red")
+        ax.set_title("ILP Mean Runtime")
+        ax.set_xlabel('Tree Size')
+        ax.set_ylabel('Runtime (s)')
+        ax.fill_between(y, time_mean - time_std_dv, time_mean + time_std_dv, facecolor="red", alpha=0.5)
+        plt.savefig(self.path / 'ILP_Time.png')
+
 
     def solve_pulp(self):
         for root, directories, files in self.w_path:
@@ -613,12 +699,3 @@ class ILP_MFF():
 
     def getDegrees(self):
         return self.root_degree, self.max_degree
-
-    def saveSolution(self):
-        threads = self.config['experiment']['threads']
-        nfilestart = self.config['experiment']['nodefilestart']
-        name = 'exp_results_ILP_' + str(threads) + '_' + str(nfilestart)
-        print(type(self.saved))
-        print(type(self.n_variables))
-        print(type(self.n_restrictions))
-        numpy.save(name, numpy.array([self.times, self.saved, self.n_variables, self.n_restrictions,self.root_degree,self.max_degree]))

@@ -61,7 +61,7 @@ class IQP_MFF():
                 starting_fire = instance[2]
                 T_Ad_Sym = instance[3]
 
-                # --- MODEL---
+                # --- MODEL-------
                 m = Model("mip1")
                 m.Params.outputFlag = 1  # 0 - Off  //  1 - On
                 m.setParam("MIPGap", self.config['experiment']['mip_gap'])
@@ -258,22 +258,25 @@ class IQP_MFF():
         saved_std_dv=np.asarray(saved_std_dv)
         saved_mean=np.asarray(saved_mean)
 
-        time_mean=np.asarray(time_mean)
-        time_std_dv=np.asarray(time_std_dv)
-
         print(saved_mean)
-        print(type(saved_mean))
+
         print(saved_std_dv)
-        print(type(saved_std_dv))
+
 
         numpy.save(self.path / "Statistics_IQP", numpy.array([saved_mean, saved_std_dv, time_mean, time_std_dv]))
         y= np.arange(0,len(time_mean), 1, dtype=int)
-        fig, ax =plt.subplots(1)
+        fig, ax = plt.subplots(1)
         ax.plot(y,saved_mean, label="Mean saved Vertices",color="blue")
+        ax.set_title("IQP Mean Saved Vertices")
+        ax.set_xlabel('Tree Size')
+        ax.set_ylabel('Saved Vertices')
         ax.fill_between(y, saved_mean+saved_std_dv,saved_mean-saved_std_dv,facecolor="blue",alpha=0.5)
         plt.savefig(self.path / 'IQP_Saved.png')
 
         fig, ax = plt.subplots(1)
         ax.plot(y, time_mean, label="Mean Time Vertices", color="red")
+        ax.set_title("IQP Mean Runtime")
+        ax.set_xlabel('Tree Size')
+        ax.set_ylabel('Runtime (s)')
         ax.fill_between(y, time_mean + time_std_dv, time_mean - time_std_dv, facecolor="red", alpha=0.5)
         plt.savefig(self.path / 'IQP_Time.png')
