@@ -72,7 +72,8 @@ class IQP_MFF():
                 # m.setParam("PreQLinearize", -1); # -1 - Automatic // 0 - Off // 1 - Strong LP relaxation // 2 - Compact relaxation
                 # m.params.BestObjStop = k
 
-                # ---VARIABLES----
+                # ---DECISION VARIABLES----
+                # Create arrays with needed size for all D.V.
                 vars = []
                 for i in range(N):
                     temp = []
@@ -80,6 +81,7 @@ class IQP_MFF():
                         temp.append(0)
                     vars.append(temp)
 
+                # Create Gurobi Variables
                 for phase in range(N):
                     for node in range(N):
                         vars[phase][node] = m.addVar(vtype=GRB.BINARY, name="x,%s" % str(phase) + "," + str(node))
@@ -87,71 +89,65 @@ class IQP_MFF():
                 self.n_variables.append(N*N)
 
                 # -------- OBJECTIVE FUNCTION ----------
-                Nodes = list(T.nodes)
-                Nodes.remove(N)
-                Nodes.sort()
-                weights = np.zeros(N)
+                Nodes = list(T.nodes)           # List of Nodes
+                Nodes.remove(N)                 # Remove last node in list (agent node)
+                Nodes.sort()                    # Sort nodes in ascendant way
+                weights = np.zeros(N)           # Container for node weights
                 i = 0
 
+                # Compute the saved nodes in rooted Tree (included himself) if defend a "n" node
+                # Delete root node
                 for node in Nodes:
                     weights[i] = len(nx.descendants(T, node)) + 1
                     i += 1
                 weights = np.delete(weights, starting_fire)
 
+                # Compute Objective function
                 objective = 0
                 weights_transpose = np.array(weights).T
                 for i in range(N):
                     vars_tmp = np.delete(vars[i], starting_fire)
                     objective += np.dot(weights_transpose, vars_tmp)
                 m.setObjective(objective, GRB.MAXIMIZE)
-
-                count_const = 0
-                # ----------------------First Constraint---------------------------------
                 m.update()
-                sum_vars = 0
+                count_const = 0
+                # ----------------------First Constraint-----------------------------------
+                # Limits to at most one vertex saved per phase
                 for phase in range(N):
-                    sum_vars = 0
-                    for node in range(N):
-                        sum_vars += vars[phase][node]
-                    count_const += 1
+                    sum_vars = sum(vars[phase])
                     m.addConstr(sum_vars <= 1)
+                m.update()
 
                 # --------------------------Second Constraint--------------------------------
-
-                # Obtain level for each node with starting fire as root
-                levels = nx.single_source_shortest_path_length(
-                    T, starting_fire
-                )
+                # Obtain level for each node in T with starting fire vertex as root
+                levels = nx.single_source_shortest_path_length(T, starting_fire) # Dictionary with vertex as keys
+                # Sorted Levels (Burning Times in Tree)
                 sorted_burning_times = numpy.zeros(N)
-
-                # Sorted Burnig time for each node (from 0 to N)
                 for i in range(N):
                     sorted_burning_times[i] = levels[i]
 
-                # Constraint for initial Position
-                initial_const = np.dot(T_Ad_Sym[N, 0:N], vars[0])
-                initial_const_ = np.dot(sorted_burning_times.T, vars[0])
-                count_const += 1
+                # This separation of initial pos constraint is because we have initial post at the end of Time matrix
+                initial_const = np.dot(T_Ad_Sym[N, 0:N], vars[0]) # Distance from initial pos to all vertices
+                initial_const_ = np.dot(sorted_burning_times.T, vars[0]) # Burning times for all vertices
                 m.addConstr(initial_const <= initial_const_, name="Init_Const")
+                count_const += 1
 
+                # For the rest of time constraints
                 for phase in range(1, N):
                     q_1 = 0
+                    d = 0
                     for phase_range in range(0, phase):
                         for node_i in range(N):
                             for node_j in range(N):
-                                q_1 += T_Ad_Sym[node_i][node_j] * (
-                                        vars[phase_range][node_i] * vars[phase_range + 1][node_j])
+                                q_1 += T_Ad_Sym[node_i][node_j] * (vars[phase_range][node_i] * vars[phase_range + 1][node_j])
                     q_1 += initial_const
-
                     q_2 = np.dot(sorted_burning_times.T, vars[phase])
-                    d = 0
                     for node in range(N):
                         d += vars[phase][node]
                     d = BN * (1 - d)
                     q_2 += d
-
-                    count_const += 1
                     m.addConstr(q_1 <= q_2, name="Q,%s" % str(phase))
+                    count_const += 1
 
                 # ----------------------Third Constraint --------------------------
                 leaf_nodes = [
@@ -175,11 +171,8 @@ class IQP_MFF():
                 # ----------------------------------Fourth Constrain-----------------------------------------
                 # Force Consecutive Node Strategy
                 for phase in range(N - 1):
-                    vn_ = 0
-                    v_ = 0
-                    for node in range(N):
-                        v_ += vars[phase][node]
-                        vn_ += vars[phase + 1][node]
+                    v_ = sum(vars[phase])
+                    vn_ = sum(vars[phase+1])
                     count_const += 1
                     m.addConstr(v_ >= vn_)
 
@@ -221,9 +214,9 @@ class IQP_MFF():
         return self.saved
 
     def getVariables_Restrictions(self):
-        return self.n_variables,self.n_restrictions
+        return self.n_variables, self.n_restrictions
     
-    def saveSolution(self,instance_path,instance,solution,saved,time):
+    def saveSolution(self,instance_path, instance,solution,saved,time):
         output_path = instance_path / instance / "Solution_Summary_IQP"
         with open(output_path, "w") as writer:
             writer.write("Solution: {}\n".format(solution))
