@@ -64,6 +64,7 @@ class ILP_MFF():
                 N = instance[1]
                 starting_fire = instance[2]
                 T_Ad_Sym = instance[3]
+                weights = instance[10]
 
                 # --- MODEL-------
                 m = Model("ILP_FF")
@@ -73,7 +74,14 @@ class ILP_MFF():
                 m.setParam("Presolve", self.config['experiment'][
                     'presolve'])  # -1 - Automatic // 0 - Off // 1 - Conservative // 2 - Aggresive
                 m.setParam("NodefileStart", self.config['experiment']['nodefilestart'])
+                m.setParam("NodefileDir", self.config['experiment']['nodefiledir'])
                 m.setParam("Threads", self.config['experiment']['threads'])
+
+                leaf_nodes = [
+                    node for node in T.nodes() if T.in_degree(node) != 0 and T.out_degree(node) == 0
+                ]
+
+                L = len(leaf_nodes)
 
                 # ---InitialPos_Node_Variables----
                 # (X_phase0_node1), (X_phase0_node2), .... ,(X_phase0_nodeN)
@@ -88,7 +96,7 @@ class ILP_MFF():
                 # (X_phase1_node0_node0), (X_phase1_node0_node1), .... ,(X_phase1_node0_nodeN),(X_phase1_node1_node0),...,(X_phase1_nodeN_nodeN)
                 # (X_phase2_node0_node0), (X_phase2_node0_node1), ...., (X_phase2_node0_nodeN),(X_phase2_node1_node0),...,(X_phase2_nodeN_nodeN)
                 vars = []
-                for i in range(N - 1):
+                for i in range(L - 1):
                     temp_1 = []
                     for j in range(N):
                         temp_2 = []
@@ -97,7 +105,7 @@ class ILP_MFF():
                         temp_1.append(temp_2)
                     vars.append(temp_1)
 
-                for phase in range(N - 1):
+                for phase in range(L - 1):
                     for node_1 in range(N):
                         for node_2 in range(N):
                             if ((node_1 != starting_fire) and (node_2 != starting_fire)):
@@ -109,23 +117,13 @@ class ILP_MFF():
                 #print(vars)
 
                 # -------- OBJECTIVE FUNCTION ----------
-                Nodes = list(T.nodes)
-                Nodes.remove(N)
-                Nodes.sort()
-                weights = np.zeros(N)
-                i = 0
-
-                for node in Nodes:
-                    weights[i] = len(nx.descendants(T, node)) + 1
-                    i += 1
-
                 # Sum initial vars to objective
                 objective = 0
                 weights_transpose = np.array(weights).T
                 objective += np.dot(weights_transpose, initial_vars)
 
                 # Sum rest of variables
-                for i in range(N - 1):
+                for i in range(L - 1):
                     for j in range(N):
                         w_copy = weights_transpose.copy()
                         w_copy[j] = 0
@@ -148,7 +146,7 @@ class ILP_MFF():
                 # Constraint 2
                 # Only one variable active for each phase
                 sum_vars = 0
-                for phase in range(N-1):
+                for phase in range(L-1):
                     sum_vars = 0
                     for node_1 in range(N):
                         for node_2 in range(N):
@@ -174,7 +172,7 @@ class ILP_MFF():
                 m.addConstr(initial_time_const <= initial_time_const_, name="Init_time_Const")
 
                 # Constraint for next phases
-                for phase in range(N - 1):
+                for phase in range(L - 1):
                     q_1 = 0
                     q_2 = 0
                     for phase_range in range(0, phase + 1):
@@ -182,7 +180,7 @@ class ILP_MFF():
                             for node_j in range(N):
                                 q_1 += T_Ad_Sym[node_i][node_j] * vars[phase_range][node_i][node_j]
                     q_1 += initial_time_const
-                    for i in range(N):
+                    for i in range(N): #CHECK
                         q_2 += np.dot(sorted_burning_times.T, vars[phase][i])
                     count_const += 1
                     m.addConstr(q_1 <= q_2, name="Q,%s" % str(phase))
@@ -199,7 +197,7 @@ class ILP_MFF():
                 for leaf in restricted_ancestors:
                     l_q = 0
                     for node in restricted_ancestors[leaf]:
-                        for phase in range(N - 1):
+                        for phase in range(L - 1):
                             for input_node in range(N):
                                 if input_node!= node:
                                     l_q += vars[phase][input_node][node]
@@ -209,7 +207,7 @@ class ILP_MFF():
 
                 # Constraint 5
                 # Consistency Restriction
-                for i in range(N):
+                for i in range(L):
                     l_q = 0
                     l_q += initial_vars[i]
                     for j in range(N):
@@ -220,7 +218,7 @@ class ILP_MFF():
                     m.addConstr(l_q <= 1)
 
                 for i in range(N):  # For each node v
-                    for j in range(N - 2):  # For each phase
+                    for j in range(L - 2):  # For each phase
                         l_q = 0
                         for k in range(N):  # For each node u
                             l_q += vars[j][k][i]
@@ -243,7 +241,7 @@ class ILP_MFF():
                 count_const += 1
                 m.addConstr(c_1 >= c_2)
 
-                for z in range(N-2):
+                for z in range(L-2):
                     c_1=0
                     c_2=0
                     for i in range(N):
@@ -257,12 +255,15 @@ class ILP_MFF():
                 # ----------------- Optimize Step--------------------------------
                 m.optimize()
                 runtime = m.Runtime
+                print("The run time is %f" % runtime)
+                print("Obj:", m.ObjVal)
                 self.saved.append(m.ObjVal)
                 self.times.append(runtime)
                 sol = []
                 for v in m.getVars():
                     if v.X > 0:
                         sol.append(v)
+                        print(v.varName)
                 self.solution = sol
 
                 # Save Solution

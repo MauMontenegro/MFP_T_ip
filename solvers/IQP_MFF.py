@@ -16,8 +16,9 @@ from utils.utils import generateInstance
 
 BN = 10000  # Big Number for Restrictions
 
+
 class IQP_MFF():
-    def __init__(self, mode, load, path,config):
+    def __init__(self, mode, load, path, config):
         # Individual Variables
         self.n_variables = []
         self.n_restrictions = []
@@ -41,7 +42,7 @@ class IQP_MFF():
     def solve(self):
         # Traverse and save Tree Node Sizes dirs
         size_dirs = []
-        for d in next(os.walk(( self.path ))):
+        for d in next(os.walk((self.path))):
             size_dirs.append(d)
         size_dirs = sorted(size_dirs[1])
         for dir in size_dirs:
@@ -60,99 +61,97 @@ class IQP_MFF():
                 N = instance[1]
                 starting_fire = instance[2]
                 T_Ad_Sym = instance[3]
+                weights = instance[10]
 
+                # N=max(nx.shortest_path_length(T, starting_fire).values())
                 # --- MODEL-------
                 m = Model("mip1")
                 m.Params.outputFlag = 1  # 0 - Off  //  1 - On
                 m.setParam("MIPGap", self.config['experiment']['mip_gap'])
                 m.setParam("Method", self.config['experiment']['method'])
-                m.setParam("Presolve", self.config['experiment']['presolve'])  # -1 - Automatic // 0 - Off // 1 - Conservative // 2 - Aggresive
+                m.setParam("Presolve", self.config['experiment'][
+                    'presolve'])  # -1 - Automatic // 0 - Off // 1 - Conservative // 2 - Aggresive
                 m.setParam("NodefileStart", self.config['experiment']['nodefilestart'])
+                m.setParam("NodefileDir",self.config['experiment']['nodefiledir'])
                 m.setParam("Threads", self.config['experiment']['threads'])
                 # m.setParam("PreQLinearize", -1); # -1 - Automatic // 0 - Off // 1 - Strong LP relaxation // 2 - Compact relaxation
                 # m.params.BestObjStop = k
 
-                # ---DECISION VARIABLES----
-                # Create arrays with needed size for all D.V.
-                vars = []
-                for i in range(N):
+                leaf_nodes = [
+                    node for node in T.nodes() if T.in_degree(node) != 0 and T.out_degree(node) == 0
+                ]
+
+                L = len(leaf_nodes)
+
+                # ---CREATE DECISION VARIABLES----
+                dvars = []
+                for i in range(L):
                     temp = []
                     for j in range(N):
                         temp.append(0)
-                    vars.append(temp)
+                    dvars.append(temp)
 
-                # Create Gurobi Variables
-                for phase in range(N):
+                # Create Gurobi Decision Variables
+                for phase in range(L):
                     for node in range(N):
-                        vars[phase][node] = m.addVar(vtype=GRB.BINARY, name="x,%s" % str(phase) + "," + str(node))
+                        dvars[phase][node] = m.addVar(vtype=GRB.BINARY, name="x,%s" % str(phase) + "," + str(node))
                 m.update()
-                self.n_variables.append(N*N)
+                self.n_variables.append(L * N)
 
-                # -------- OBJECTIVE FUNCTION ----------
-                Nodes = list(T.nodes)           # List of Nodes
-                Nodes.remove(N)                 # Remove last node in list (agent node)
-                Nodes.sort()                    # Sort nodes in ascendant way
-                weights = np.zeros(N)           # Container for node weights
-                i = 0
-
-                # Compute the saved nodes in rooted Tree (included himself) if defend a "n" node
-                # Delete root node
-                for node in Nodes:
-                    weights[i] = len(nx.descendants(T, node)) + 1
-                    i += 1
+                # -------- OBJECTIVE FUNCTION ---------
                 weights = np.delete(weights, starting_fire)
-
                 # Compute Objective function
                 objective = 0
                 weights_transpose = np.array(weights).T
-                for i in range(N):
-                    vars_tmp = np.delete(vars[i], starting_fire)
+                for i in range(L): # Change Here to number of leaves
+                    vars_tmp = np.delete(dvars[i], starting_fire)
                     objective += np.dot(weights_transpose, vars_tmp)
                 m.setObjective(objective, GRB.MAXIMIZE)
                 m.update()
                 count_const = 0
+
                 # ----------------------First Constraint-----------------------------------
                 # Limits to at most one vertex saved per phase
-                for phase in range(N):
-                    sum_vars = sum(vars[phase])
+                for phase in range(L): # Change Here to number of leaves
+                    sum_vars = sum(dvars[phase])
                     m.addConstr(sum_vars <= 1)
                 m.update()
 
                 # --------------------------Second Constraint--------------------------------
                 # Obtain level for each node in T with starting fire vertex as root
-                levels = nx.single_source_shortest_path_length(T, starting_fire) # Dictionary with vertex as keys
+                levels = nx.single_source_shortest_path_length(T, starting_fire)  # Dictionary with vertex as keys
+
                 # Sorted Levels (Burning Times in Tree)
                 sorted_burning_times = numpy.zeros(N)
                 for i in range(N):
                     sorted_burning_times[i] = levels[i]
 
-                # This separation of initial pos constraint is because we have initial post at the end of Time matrix
-                initial_const = np.dot(T_Ad_Sym[N, 0:N], vars[0]) # Distance from initial pos to all vertices
-                initial_const_ = np.dot(sorted_burning_times.T, vars[0]) # Burning times for all vertices
+                # This separation of initial pos constraint is because we have initial position at the end of Time
+                # matrix
+                initial_const = np.dot(T_Ad_Sym[N, 0:N], dvars[0])  # Distance from initial pos to all vertices
+                initial_const_ = np.dot(sorted_burning_times.T, dvars[0])  # Burning times for all vertices
                 m.addConstr(initial_const <= initial_const_, name="Init_Const")
                 count_const += 1
 
                 # For the rest of time constraints
-                for phase in range(1, N):
+                for phase in range(1, L): # Change Here to number of leaves
                     q_1 = 0
                     d = 0
                     for phase_range in range(0, phase):
                         for node_i in range(N):
                             for node_j in range(N):
-                                q_1 += T_Ad_Sym[node_i][node_j] * (vars[phase_range][node_i] * vars[phase_range + 1][node_j])
+                                q_1 += T_Ad_Sym[node_i][node_j] * (
+                                            dvars[phase_range][node_i] * dvars[phase_range + 1][node_j])
                     q_1 += initial_const
-                    q_2 = np.dot(sorted_burning_times.T, vars[phase])
+                    q_2 = np.dot(sorted_burning_times.T, dvars[phase])
                     for node in range(N):
-                        d += vars[phase][node]
+                        d += dvars[phase][node]
                     d = BN * (1 - d)
                     q_2 += d
                     m.addConstr(q_1 <= q_2, name="Q,%s" % str(phase))
                     count_const += 1
 
                 # ----------------------Third Constraint --------------------------
-                leaf_nodes = [
-                    node for node in T.nodes() if T.in_degree(node) != 0 and T.out_degree(node) == 0
-                ]
 
                 restricted_ancestors = {}
                 for leaf in leaf_nodes:
@@ -163,16 +162,18 @@ class IQP_MFF():
                 for leaf in restricted_ancestors:
                     l_q = 0
                     for node in restricted_ancestors[leaf]:
-                        for phase in range(N):
-                            l_q += vars[phase][node]
+                        for phase in range(L):
+                            l_q += dvars[phase][node]
                     count_const += 1
                     m.addConstr(l_q <= 1)
 
+
+
                 # ----------------------------------Fourth Constrain-----------------------------------------
                 # Force Consecutive Node Strategy
-                for phase in range(N - 1):
-                    v_ = sum(vars[phase])
-                    vn_ = sum(vars[phase+1])
+                for phase in range(L - 1):
+                    v_ = sum(dvars[phase])
+                    vn_ = sum(dvars[phase+1])
                     count_const += 1
                     m.addConstr(v_ >= vn_)
 
@@ -215,8 +216,8 @@ class IQP_MFF():
 
     def getVariables_Restrictions(self):
         return self.n_variables, self.n_restrictions
-    
-    def saveSolution(self,instance_path, instance,solution,saved,time):
+
+    def saveSolution(self, instance_path, instance, solution, saved, time):
         output_path = instance_path / instance / "Solution_Summary_IQP"
         with open(output_path, "w") as writer:
             writer.write("Solution: {}\n".format(solution))
@@ -230,7 +231,7 @@ class IQP_MFF():
 
     def Statistics(self):
         time_mean = []
-        time_std_dv=[]
+        time_std_dv = []
         saved_mean = []
         saved_std_dv = []
         # Statistics for run time
@@ -248,22 +249,21 @@ class IQP_MFF():
             std = np.std(node_size)
             saved_mean.append(m)
             saved_std_dv.append(std)
-        saved_std_dv=np.asarray(saved_std_dv)
-        saved_mean=np.asarray(saved_mean)
+        saved_std_dv = np.asarray(saved_std_dv)
+        saved_mean = np.asarray(saved_mean)
 
         print(saved_mean)
 
         print(saved_std_dv)
 
-
         numpy.save(self.path / "Statistics_IQP", numpy.array([saved_mean, saved_std_dv, time_mean, time_std_dv]))
-        y= np.arange(0,len(time_mean), 1, dtype=int)
+        y = np.arange(0, len(time_mean), 1, dtype=int)
         fig, ax = plt.subplots(1)
-        ax.plot(y,saved_mean, label="Mean saved Vertices",color="blue")
+        ax.plot(y, saved_mean, label="Mean saved Vertices", color="blue")
         ax.set_title("IQP Mean Saved Vertices")
         ax.set_xlabel('Tree Size')
         ax.set_ylabel('Saved Vertices')
-        ax.fill_between(y, saved_mean+saved_std_dv,saved_mean-saved_std_dv,facecolor="blue",alpha=0.5)
+        ax.fill_between(y, saved_mean + saved_std_dv, saved_mean - saved_std_dv, facecolor="blue", alpha=0.5)
         plt.savefig(self.path / 'IQP_Saved.png')
 
         fig, ax = plt.subplots(1)

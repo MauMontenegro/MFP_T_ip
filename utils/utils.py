@@ -66,7 +66,10 @@ def generateInstance(load,path,directory):
         for node in T.nodes:
             mapping[node] = int(node)
         T = nx.relabel_nodes(T, mapping)
-        T_Ad_Sym = np.load(path / directory / "FDM_MFFP.npy")
+        arrays = np.load(path / directory / "FDM_MFFP.npz")
+        T_Ad_Sym = arrays['arr_0']
+        weights = arrays['arr_1']
+
         lay = open(path / directory / "layout_MFF.json")
         pos = {}
         pos_ = json.load(lay)
@@ -97,7 +100,7 @@ def generateInstance(load,path,directory):
         # plt.show()
         #plt.savefig("Graph_Test.png")
 
-        return T, N, starting_fire, T_Ad_Sym, seed, scale, a_x_pos, a_y_pos, max_degree, root_degree
+        return T, N, starting_fire, T_Ad_Sym, seed, scale, a_x_pos, a_y_pos, max_degree, root_degree, weights
 
     else:
         # Generate Random Tree with initial fire_root

@@ -1,8 +1,8 @@
 experiment:
-  mip_gap:  0.0 # Non-Optimal Solution
+  mip_gap:  0.0 # Set above 0 to get a non-optimail solution
   method: 1 #(0 or 1)
   presolve: 2 # (1 conservative, 2 aggresive)
-  nodefilestart: 0.001 # To Save some nodes in disk (How much percent of ram to use)
+  nodefilestart: 0.5 # To Save some nodes in disk (How much percent of ram to use)
   threads: 12 # Number of threads we want to use (Vary between 6,8,12)
-  nodefiledir: "/home/mauro/PycharmProjects/ILP_Tree_MFFP/gurobi_log"
+  nodefiledir: "/home/mauro/PycharmProjects/MFP_T_ip"
   presparsify: 1 # 1 to force
