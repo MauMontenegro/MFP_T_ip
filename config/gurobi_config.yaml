@@ -1,5 +1,5 @@
 experiment:
-  mip_gap:  0.0 # Set above 0 to get a non-optimail solution
+  mip_gap:  0.0 # Set above 0 to get a non-optimal solution
   method: 1 #(0 or 1)
   presolve: 2 # (1 conservative, 2 aggresive)
   nodefilestart: 0.5 # To Save some nodes in disk (How much percent of ram to use)

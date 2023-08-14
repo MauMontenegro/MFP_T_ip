@@ -100,7 +100,7 @@ def generateInstance(load,path,directory):
         # plt.show()
         #plt.savefig("Graph_Test.png")
 
-        return T, N, starting_fire, T_Ad_Sym, seed, scale, a_x_pos, a_y_pos, max_degree, root_degree, weights
+        return T, N, starting_fire, T_Ad_Sym, seed, scale, a_x_pos, a_y_pos, max_degree, root_degree, weights,pos
 
     else:
         # Generate Random Tree with initial fire_root

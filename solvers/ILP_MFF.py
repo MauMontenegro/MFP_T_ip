@@ -121,7 +121,6 @@ class ILP_MFF():
                 objective = 0
                 weights_transpose = np.array(weights).T
                 objective += np.dot(weights_transpose, initial_vars)
-
                 # Sum rest of variables
                 for i in range(L - 1):
                     for j in range(N):
@@ -132,7 +131,6 @@ class ILP_MFF():
 
                 #print(objective)
                 count_const = 0
-
                 # ----------SUBJECT TO---------------------
 
                 # Constraint 1
@@ -152,6 +150,7 @@ class ILP_MFF():
                         for node_2 in range(N):
                           sum_vars += vars[phase][node_1][node_2]
                     count_const += 1
+                    #print(sum_vars)
                     m.addConstr(sum_vars <= 1)
 
                 # Constraint 3
@@ -168,10 +167,11 @@ class ILP_MFF():
                 # Constraint for initial Position
                 initial_time_const = np.dot(T_Ad_Sym[N, 0:N], initial_vars)
                 initial_time_const_ = np.dot(sorted_burning_times.T, initial_vars)
+
                 count_const += 1
                 m.addConstr(initial_time_const <= initial_time_const_, name="Init_time_Const")
 
-                # Constraint for next phases
+                # Constraint for 1 to L phase
                 for phase in range(L - 1):
                     q_1 = 0
                     q_2 = 0
@@ -180,7 +180,7 @@ class ILP_MFF():
                             for node_j in range(N):
                                 q_1 += T_Ad_Sym[node_i][node_j] * vars[phase_range][node_i][node_j]
                     q_1 += initial_time_const
-                    for i in range(N): #CHECK
+                    for i in range(N):
                         q_2 += np.dot(sorted_burning_times.T, vars[phase][i])
                     count_const += 1
                     m.addConstr(q_1 <= q_2, name="Q,%s" % str(phase))
@@ -207,7 +207,8 @@ class ILP_MFF():
 
                 # Constraint 5
                 # Consistency Restriction
-                for i in range(L):
+                print(initial_vars)
+                for i in range(N):
                     l_q = 0
                     l_q += initial_vars[i]
                     for j in range(N):

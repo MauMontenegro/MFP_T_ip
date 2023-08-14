@@ -76,134 +76,137 @@ class IQP_MFF():
                 m.setParam("Threads", self.config['experiment']['threads'])
                 # m.setParam("PreQLinearize", -1); # -1 - Automatic // 0 - Off // 1 - Strong LP relaxation // 2 - Compact relaxation
                 # m.params.BestObjStop = k
+                #m.setParam('TimeLimit', 1*60)
 
+                # Get max defense phases (k)
                 leaf_nodes = [
                     node for node in T.nodes() if T.in_degree(node) != 0 and T.out_degree(node) == 0
                 ]
+                Lfactor = len(leaf_nodes)
+                flag = Lfactor-1
 
-                L = len(leaf_nodes)
+                for L in range(flag, Lfactor):
+                    # ---CREATE DECISION VARIABLES----
+                    dvars = []
+                    for i in range(L):
+                        temp = []
+                        for j in range(N):
+                            temp.append(0)
+                        dvars.append(temp)
 
-                # ---CREATE DECISION VARIABLES----
-                dvars = []
-                for i in range(L):
-                    temp = []
-                    for j in range(N):
-                        temp.append(0)
-                    dvars.append(temp)
+                    # Create Gurobi Decision Variables
+                    for phase in range(L):
+                        for node in range(N):
+                            dvars[phase][node] = m.addVar(vtype=GRB.BINARY, name="x,%s" % str(phase) + "," + str(node))
+                    m.update()
+                    self.n_variables.append(L * N)
 
-                # Create Gurobi Decision Variables
-                for phase in range(L):
-                    for node in range(N):
-                        dvars[phase][node] = m.addVar(vtype=GRB.BINARY, name="x,%s" % str(phase) + "," + str(node))
-                m.update()
-                self.n_variables.append(L * N)
+                    # -------- OBJECTIVE FUNCTION ---------
+                    weights = np.delete(weights, starting_fire)
+                    # Compute Objective function
+                    objective = 0
+                    weights_transpose = np.array(weights).T
+                    for i in range(L): # Change Here to number of leaves
+                        vars_tmp = np.delete(dvars[i], starting_fire)
+                        objective += np.dot(weights_transpose, vars_tmp)
+                    m.setObjective(objective, GRB.MAXIMIZE)
+                    m.update()
+                    count_const = 0
 
-                # -------- OBJECTIVE FUNCTION ---------
-                weights = np.delete(weights, starting_fire)
-                # Compute Objective function
-                objective = 0
-                weights_transpose = np.array(weights).T
-                for i in range(L): # Change Here to number of leaves
-                    vars_tmp = np.delete(dvars[i], starting_fire)
-                    objective += np.dot(weights_transpose, vars_tmp)
-                m.setObjective(objective, GRB.MAXIMIZE)
-                m.update()
-                count_const = 0
+                    # ----------------------First Constraint-----------------------------------
+                    # Limits to at most one vertex saved per phase
+                    for phase in range(L): # Change Here to number of leaves
+                        sum_vars = sum(dvars[phase])
+                        m.addConstr(sum_vars <= 1)
+                    m.update()
 
-                # ----------------------First Constraint-----------------------------------
-                # Limits to at most one vertex saved per phase
-                for phase in range(L): # Change Here to number of leaves
-                    sum_vars = sum(dvars[phase])
-                    m.addConstr(sum_vars <= 1)
-                m.update()
+                    # --------------------------Second Constraint--------------------------------
+                    # Obtain level for each node in T with starting fire vertex as root
+                    levels = nx.single_source_shortest_path_length(T, starting_fire)  # Dictionary with vertex as keys
 
-                # --------------------------Second Constraint--------------------------------
-                # Obtain level for each node in T with starting fire vertex as root
-                levels = nx.single_source_shortest_path_length(T, starting_fire)  # Dictionary with vertex as keys
+                    # Sorted Levels (Burning Times in Tree)
+                    sorted_burning_times = numpy.zeros(N)
+                    for i in range(N):
+                        sorted_burning_times[i] = levels[i]
 
-                # Sorted Levels (Burning Times in Tree)
-                sorted_burning_times = numpy.zeros(N)
-                for i in range(N):
-                    sorted_burning_times[i] = levels[i]
-
-                # This separation of initial pos constraint is because we have initial position at the end of Time
-                # matrix
-                initial_const = np.dot(T_Ad_Sym[N, 0:N], dvars[0])  # Distance from initial pos to all vertices
-                initial_const_ = np.dot(sorted_burning_times.T, dvars[0])  # Burning times for all vertices
-                m.addConstr(initial_const <= initial_const_, name="Init_Const")
-                count_const += 1
-
-                # For the rest of time constraints
-                for phase in range(1, L): # Change Here to number of leaves
-                    q_1 = 0
-                    d = 0
-                    for phase_range in range(0, phase):
-                        for node_i in range(N):
-                            for node_j in range(N):
-                                q_1 += T_Ad_Sym[node_i][node_j] * (
-                                            dvars[phase_range][node_i] * dvars[phase_range + 1][node_j])
-                    q_1 += initial_const
-                    q_2 = np.dot(sorted_burning_times.T, dvars[phase])
-                    for node in range(N):
-                        d += dvars[phase][node]
-                    d = BN * (1 - d)
-                    q_2 += d
-                    m.addConstr(q_1 <= q_2, name="Q,%s" % str(phase))
+                    # This separation of initial pos constraint is because we have initial position at the end of Time
+                    # matrix
+                    initial_const = np.dot(T_Ad_Sym[N, 0:N], dvars[0])  # Distance from initial pos to all vertices
+                    initial_const_ = np.dot(sorted_burning_times.T, dvars[0])  # Burning times for all vertices
+                    m.addConstr(initial_const <= initial_const_, name="Init_Const")
                     count_const += 1
 
-                # ----------------------Third Constraint --------------------------
+                    # For the rest of time constraints
+                    for phase in range(1, L): # Change Here to number of leaves
+                        q_1 = 0
+                        d = 0
+                        for phase_range in range(0, phase):
+                            for node_i in range(N):
+                                for node_j in range(N):
+                                    q_1 += T_Ad_Sym[node_i][node_j] * (
+                                                dvars[phase_range][node_i] * dvars[phase_range + 1][node_j])
+                        q_1 += initial_const
+                        q_2 = np.dot(sorted_burning_times.T, dvars[phase])
+                        for node in range(N):
+                            d += dvars[phase][node]
+                        d = BN * (1 - d)
+                        q_2 += d
+                        m.addConstr(q_1 <= q_2, name="Q,%s" % str(phase))
+                        count_const += 1
 
-                restricted_ancestors = {}
-                for leaf in leaf_nodes:
-                    restricted_ancestors[leaf] = list(nx.ancestors(T, leaf))
-                    restricted_ancestors[leaf].remove(starting_fire)
-                    restricted_ancestors[leaf].insert(0, leaf)
+                    # ----------------------Third Constraint --------------------------
 
-                for leaf in restricted_ancestors:
-                    l_q = 0
-                    for node in restricted_ancestors[leaf]:
-                        for phase in range(L):
-                            l_q += dvars[phase][node]
-                    count_const += 1
-                    m.addConstr(l_q <= 1)
+                    restricted_ancestors = {}
+                    for leaf in leaf_nodes:
+                        restricted_ancestors[leaf] = list(nx.ancestors(T, leaf))
+                        restricted_ancestors[leaf].remove(starting_fire)
+                        restricted_ancestors[leaf].insert(0, leaf)
+
+                    for leaf in restricted_ancestors:
+                        l_q = 0
+                        for node in restricted_ancestors[leaf]:
+                            for phase in range(L):
+                                l_q += dvars[phase][node]
+                        count_const += 1
+                        m.addConstr(l_q <= 1)
 
 
 
-                # ----------------------------------Fourth Constrain-----------------------------------------
-                # Force Consecutive Node Strategy
-                for phase in range(L - 1):
-                    v_ = sum(dvars[phase])
-                    vn_ = sum(dvars[phase+1])
-                    count_const += 1
-                    m.addConstr(v_ >= vn_)
+                    # ----------------------------------Fourth Constrain-----------------------------------------
+                    # Force Consecutive Node Strategy
+                    for phase in range(L - 1):
+                        v_ = sum(dvars[phase])
+                        vn_ = sum(dvars[phase+1])
+                        count_const += 1
+                        m.addConstr(v_ >= vn_)
 
-                self.n_restrictions.append(count_const)
+                    self.n_restrictions.append(count_const)
 
-                # ----------------- Optimize Step--------------------------------
-                m.update()
-                m.optimize()
-                runtime = m.Runtime
-                print("The run time is %f" % runtime)
-                print("Obj:", m.ObjVal)
-                self.saved.append(m.ObjVal)
-                self.times.append(runtime)
-                sol=[]
-                for v in m.getVars():
-                    if v.X > 0:
-                        sol.append(v)
-                        print(v.varName)
-                self.solution = sol
-                #m.write('IQP_model.lp')
+                    # ----------------- Optimize Step--------------------------------
+                    m.update()
+                    m.optimize()
+                    runtime = m.Runtime
+                    print("The run time is %f" % runtime)
+                    print("Obj:", m.ObjVal)
+                    self.saved.append(m.ObjVal)
+                    self.times.append(runtime)
+                    sol=[]
+                    for v in m.getVars():
+                        if v.X > 0:
+                            sol.append(v)
+                            print(v.varName)
+                    self.solution = sol
+                    #m.write('IQP_model.lp')
 
-                # Save Solution
-                self.saveSolution(instance_path, str(inst), sol, m.Objval, runtime)
-            # Save
-            self.total_saved.append(self.saved)
-            self.total_times.append(self.times)
-            # Reset
-            self.saved = []
-            self.times = []
-        self.Statistics()
+                    # Save Solution
+                    self.saveSolution(instance_path, str(inst), sol, m.Objval, runtime)
+                # Save
+                self.total_saved.append(self.saved)
+                self.total_times.append(self.times)
+                # Reset
+                self.saved = []
+                self.times = []
+            self.Statistics()
 
     def getSolution(self):
         return self.solution
@@ -263,6 +266,7 @@ class IQP_MFF():
         ax.set_title("IQP Mean Saved Vertices")
         ax.set_xlabel('Tree Size')
         ax.set_ylabel('Saved Vertices')
+        plt.grid()
         ax.fill_between(y, saved_mean + saved_std_dv, saved_mean - saved_std_dv, facecolor="blue", alpha=0.5)
         plt.savefig(self.path / 'IQP_Saved.png')
 
